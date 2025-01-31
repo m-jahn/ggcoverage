@@ -9,7 +9,7 @@ LoadTrackFile(
   track.folder = NULL,
   format = c("bam", "wig", "bw", "bedgraph", "txt"),
   region = NULL,
-  extend = 2000,
+  extend = 0,
   gtf.gr = NULL,
   gene.name = "HNRNPC",
   gene.name.type = c("gene_name", "gene_id"),
@@ -20,6 +20,7 @@ LoadTrackFile(
   single.nuc = FALSE,
   single.nuc.region = NULL,
   bin.size = 10,
+  bin.func = "sum",
   bc.extra.para = NULL,
   n.cores = 1
 )
@@ -34,7 +35,7 @@ LoadTrackFile(
 \item{region}{Region to extract coverage for, eg: chr14:21,677,306-21,737,601 or chr14:21,677,306.
 Default: NULL, coverage is extracted from the first annotated chromosome/sequence.}
 
-\item{extend}{Extend length of \code{region}. Default: 2000.}
+\item{extend}{Extend length of \code{region}. Default: 0.}
 
 \item{gtf.gr}{Granges object of GTF, created with \code{\link[rtracklayer]{import.gff}}. Default: NULL.}
 
@@ -58,8 +59,11 @@ Default: RPKM.}
 
 \item{single.nuc.region}{Region for \code{single.nuc}. Default: NULL}
 
-\item{bin.size}{Size of the bins, in bases. Default: 10. Only used for BAM files, ignored for Wig, Bigwig, etc.
+\item{bin.size}{Approximate size of the bins, in bases. Default: 10. Only used for BAM files, ignored for Wig, Bigwig, etc.
 Set to NULL to turn binning off.}
+
+\item{bin.func}{Function used to summarize read counts over bins when norm.method = "None". Can be one of "sum",
+"mean", "median". Default: "sum". Only used for BAM files, ignored for Wig, Bigwig, etc.}
 
 \item{bc.extra.para}{Extra parameters for \code{bamCoverage}, eg: "--effectiveGenomeSize 2700000000 --ignoreForNormalization chrX"}
 

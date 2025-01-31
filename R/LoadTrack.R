@@ -5,7 +5,7 @@
 #' @param format Track file format, chosen from bam, wig, bw(bigwig), bedgraph(bedGraph) and txt.
 #' @param region Region to extract coverage for, eg: chr14:21,677,306-21,737,601 or chr14:21,677,306.
 #'   Default: NULL, coverage is extracted from the first annotated chromosome/sequence.
-#' @param extend Extend length of \code{region}. Default: 2000.
+#' @param extend Extend length of \code{region}. Default: 0.
 #' @param gtf.gr Granges object of GTF, created with \code{\link[rtracklayer]{import.gff}}. Default: NULL.
 #' @param gene.name The name of gene. Default: HNRNPC.
 #' @param gene.name.type Gene name type (filed of \code{gtf.gr}), chosen from gene_name and gene_id.
@@ -19,20 +19,22 @@
 #'   Default: RPKM.
 #' @param single.nuc Logical value, whether to visualize at single nucleotide level. Default: FALSE.
 #' @param single.nuc.region Region for \code{single.nuc}. Default: NULL
-#' @param bin.size Size of the bins, in bases. Default: 10. Only used for BAM files, ignored for Wig, Bigwig, etc.
+#' @param bin.size Approximate size of the bins, in bases. Default: 10. Only used for BAM files, ignored for Wig, Bigwig, etc.
 #'   Set to NULL to turn binning off.
+#' @param bin.func Function used to summarize read counts over bins when norm.method = "None". Can be one of "sum",
+#'   "mean", "median". Default: "sum". Only used for BAM files, ignored for Wig, Bigwig, etc.
 #' @param bc.extra.para Extra parameters for \code{bamCoverage}, eg: "--effectiveGenomeSize 2700000000 --ignoreForNormalization chrX"
 #' @param n.cores The number of cores to be used for this job. Default: 1.
 #'
 #' @return A dataframe.
 #' @importFrom rtracklayer import
-#' @importFrom Rsamtools indexBam ScanBamParam
+#' @importFrom Rsamtools indexBam ScanBamParam scanBam countBam idxstatsBam
 #' @importFrom utils read.csv
 #' @importFrom GenomicAlignments alphabetFrequencyFromBam readGAlignments coverage
-#' @importFrom GenomicRanges GRanges
+#' @importFrom GenomicRanges GRanges restrict width resize strand
 #' @importFrom IRanges IRanges subsetByOverlaps
 #' @importFrom dplyr %>%
-#' @importFrom dplyr select filter mutate all_of group_by summarize
+#' @importFrom dplyr select filter mutate all_of group_by summarize arrange desc bind_rows
 #' @importFrom BiocParallel register MulticoreParam bplapply
 #' @importFrom ggplot2 cut_width
 #' @export
@@ -58,14 +60,14 @@
 LoadTrackFile <- function(
     track.file, track.folder = NULL,
     format = c("bam", "wig", "bw", "bedgraph", "txt"),
-    region = NULL, extend = 2000,
+    region = NULL, extend = 0,
     gtf.gr = NULL, gene.name = "HNRNPC",
     gene.name.type = c("gene_name", "gene_id"),
     meta.info = NULL, meta.file = "",
     bamcoverage.path = NULL,
     norm.method = c("RPKM", "CPM", "BPM", "RPGC", "None"),
     single.nuc = FALSE, single.nuc.region = NULL,
-    bin.size = 10, bc.extra.para = NULL, n.cores = 1) {
+    bin.size = 10, bin.func = "sum", bc.extra.para = NULL, n.cores = 1) {
   # check parameters
   format <- match.arg(arg = format)
   gene.name.type <- match.arg(arg = gene.name.type)
@@ -78,16 +80,31 @@ LoadTrackFile <- function(
 
   # get genomic region if supplied, else it is guessed from input
   if (is.null(region)) {
-    message("No 'region' specified; extracting coverage for an example range\n(<=100,000 bases, first annotated sequence)")
+    message("No 'region' specified; extracting coverage based on file content")
     if (format == "bam") {
-      seqnames <- Rsamtools::scanBamHeader(track.file[1]) %>%
-        lapply(function(x) x$targets) %>%
-        unname() %>%
-        unlist()
+      file_stats <- Rsamtools::countBam(track.file[1])
+      message(paste0(
+          "Estimating coverage for file '", file_stats$file,
+          "' with ", file_stats$records, " reads and ",
+          file_stats$nucleotides, " nucleotides"
+      ))
+      record_stats <- Rsamtools::idxstatsBam(track.file[1]) %>%
+        dplyr::arrange(dplyr::desc(.data$mapped)) %>%
+        dplyr::slice(1)
+      record_range <- Rsamtools::scanBam(track.file[1], param = Rsamtools::ScanBamParam(what = c("rname", "pos"))) %>%
+        as.data.frame() %>%
+        dplyr::filter(.data$rname == as.character(record_stats$seqnames)) %>%
+        dplyr::pull(.data$pos) %>%
+        range()
+      record_range[2] <- min(record_range[1] + 100000, record_range[2])
       gr <- GenomicRanges::GRanges(
-        seqnames = names(seqnames[1]),
-        IRanges(start = 1, end = min(100000, seqnames[1]))
+        seqnames = as.character(record_stats$seqnames),
+        IRanges::IRanges(start = record_range[1], end = record_range[2])
       )
+      message(paste0("Extracted range of length ", diff(record_range),
+          " from SeqRecord '", record_stats$seqnames,
+          "' (", record_range[1], ":", record_range[2],")"
+      ))
     } else if (format %in% c("wig", "bw", "bedgraph")) {
       gr <- range(rtracklayer::import(track.file[1]))
       seqnames <- as.character(seqnames(gr))
@@ -95,7 +112,6 @@ LoadTrackFile <- function(
         gr <- GenomicRanges::resize(gr, width = 100000)
       }
     }
-    message(paste0("Coverage extracted from sequence/chromosome: ", names(seqnames[1])))
   } else {
     gr <- PrepareRegion(
       region = region,
@@ -146,13 +162,13 @@ LoadTrackFile <- function(
         message("Calculating coverage with GenomicAlignments when 'norm.method = None'")
         if (is.null(n.cores) || n.cores == 1) {
           track.list <- lapply(
-            track.file, import_bam_ga, gr, bin.size
+            track.file, import_bam_ga, gr, bin.size, bin.func
           )
         } else {
           track.list <- BiocParallel::bplapply(
             track.file,
             BPPARAM = BiocParallel::MulticoreParam(),
-            FUN = import_bam_ga, gr, bin.size
+            FUN = import_bam_ga, gr, bin.size, bin.func
           )
         }
       } else {
@@ -249,25 +265,26 @@ import_txt <- function(x) {
   return(single.track.df)
 }
 
-import_bam_ga <- function(x, gr, bin.size) {
+import_bam_ga <- function(x, gr, bin_size, bin.func) {
   # get basename
-  track.file.base <- basename(x)
+  base_name <- basename(x)
   # load track
   param <- Rsamtools::ScanBamParam(which = gr)
   ga <- GenomicAlignments::readGAlignments(x, param = param)
-  ga.cov <- GenomicAlignments::coverage(ga)
-  ga.cov.gr <- GenomicRanges::GRanges(ga.cov)
-  ga.cov.df <- IRanges::subsetByOverlaps(ga.cov.gr, gr) %>%
-    as.data.frame()
-  # valid the region
-  gr.df <- as.data.frame(gr)
-  ga.cov.df[1, "start"] <- gr.df[1, "start"]
-  ga.cov.df[nrow(ga.cov.df), "end"] <- gr.df[1, "end"]
-  # optional binning
-  ga.cov.df <- bin_coverage(ga.cov.df, bin.size)
+  ga_cov_df <- lapply(c("+", "-", "*"), function(ga_strand) {
+    ga_cov <- GenomicAlignments::coverage(ga[strand(ga) == ga_strand])
+    ga_cov_gr <- GenomicRanges::GRanges(ga_cov)
+    GenomicRanges::strand(ga_cov_gr) <- ga_strand
+    IRanges::subsetByOverlaps(ga_cov_gr, gr) %>%
+      GenomicRanges::restrict(start = start(gr), end = end(gr), keep.all.ranges = FALSE) %>%
+      as.data.frame() %>%
+      dplyr::filter(!(.data$score == 0 & .data$start == start(gr) & .data$end == end(gr)))
+  }) %>%
+    dplyr::bind_rows()
+  ga_cov_df <- bin_coverage(ga_cov_df, bin_size, bin.func)
   # add track file
-  ga.cov.df$TrackFile <- track.file.base
-  return(ga.cov.df)
+  ga_cov_df$TrackFile <- base_name
+  return(ga_cov_df)
 }
 
 index_bam <- function(x) {
@@ -330,15 +347,21 @@ bam_coverage <- function(
   return(single.track.df)
 }
 
-bin_coverage <- function(df, bin.size = 10) {
-  if (!is.null(bin.size) && is.numeric(bin.size)) {
+bin_coverage <- function(df, bin_size = 10, bin_func = "sum") {
+  if (!is.null(bin_size) && is.numeric(bin_size)) {
     binned_df <- df %>%
       dplyr::mutate(
-        bin = ggplot2::cut_width(start, width = bin.size, center = bin.size / 2, labels = FALSE) * bin.size
+        bin = ggplot2::cut_width(start, width = bin_size, center = bin_size / 2, labels = FALSE)
       ) %>%
       dplyr::group_by(.data$seqnames, .data$bin, .data$strand) %>%
-      dplyr::summarize(score = mean(.data$score, na.rm = TRUE), .groups = "drop") %>%
-      dplyr::mutate(start = .data$bin - (min(.data$bin) - 1), end = .data$bin, width = bin.size) %>%
+      dplyr::summarize(
+        start = start[1],
+        end = tail(end, 1),
+        width = end - start + 1,
+        score = do.call(bin_func, list(x = .data$score, na.rm = TRUE)),
+        .groups = "drop"
+      ) %>%
+      dplyr::arrange(seqnames, strand, start) %>%
       dplyr::select(dplyr::all_of(c("seqnames", "start", "end", "width", "strand", "score"))) %>%
       as.data.frame()
     return(binned_df)
