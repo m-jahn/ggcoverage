@@ -198,7 +198,8 @@ ggplot_add.gene <- function(object, plot, object_name) {
     } else {
       # select used features
       gene.info.used <- gtf.df.used %>%
-        dplyr::filter(type %in% c("gene", "exon", "UTR")) %>%
+        dplyr::mutate(type = tolower(type)) %>%
+        dplyr::filter(type %in% c("gene", "exon", "utr", "five_prime_utr", "three_prime_utr")) %>%
         dplyr::select(c("seqnames", "start", "end", "strand", "type", used.gene.type.name, "gene_name"))
     }
     colnames(gene.info.used) <- c("seqnames", "start", "end", "strand", "type", "gene_type", "gene_name")
@@ -209,7 +210,12 @@ ggplot_add.gene <- function(object, plot, object_name) {
   # modify region
   gene.info.used[gene.info.used$start <= plot.range.start, "start"] <- plot.range.start
   gene.info.used[gene.info.used$end >= plot.range.end, "end"] <- plot.range.end
-  gene.info.used.gene <- gene.info.used %>% dplyr::filter(type == "gene")
+  if (!"gene" %in% gene.info.used$type) {
+    gene.info.used.gene <- gene.info.used %>% dplyr::filter(type %in% c("exon", "utr", "five_prime_utr", "three_prime_utr"))
+    warning("No entries in GTF/GFF file for type 'gene' -- will plot exon/UTR features instead")
+  } else {
+    gene.info.used.gene <- gene.info.used %>% dplyr::filter(type == "gene")
+  }
   # convert dataframe to GR
   used.gene.gr <- GenomicRanges::makeGRangesFromDataFrame(gene.info.used.gene,
     ignore.strand = TRUE,
@@ -235,7 +241,7 @@ ggplot_add.gene <- function(object, plot, object_name) {
   gene.info.used.exon$start <- as.numeric(gene.info.used.exon$start)
   gene.info.used.exon$end <- as.numeric(gene.info.used.exon$end)
   # get utr region
-  gene.info.used.utr <- gene.info.used %>% dplyr::filter(type == "UTR")
+  gene.info.used.utr <- gene.info.used %>% dplyr::filter(type %in% c("utr", "five_prime_utr", "three_prime_utr"))
   gene.info.used.utr$start <- as.numeric(gene.info.used.utr$start)
   gene.info.used.utr$end <- as.numeric(gene.info.used.utr$end)
   # change UTR
