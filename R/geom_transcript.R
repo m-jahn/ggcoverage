@@ -2,7 +2,7 @@
 #'
 #' @param gtf.gr Granges object of GTF, created with \code{\link[rtracklayer]{import.gff}}.
 #'   Default: NULL.
-#' @param gene.name Gene name of all transcripts. Default: HNRNPC.
+#' @param gene.name Gene name of all transcripts. Default: NULL.
 #' @param overlap.tx.gap The gap between transcript groups. Default: 0.1.
 #' @param overlap.style The style of transcript groups, choose from loose (each
 #'   transcript occupies single line) and tight (place non-overlap transcripts
@@ -43,6 +43,7 @@
 #' element_text element_rect margin scale_y_continuous scale_color_manual scale_x_continuous coord_cartesian
 #' @importFrom patchwork wrap_plots
 #' @importFrom grDevices grey
+#' @importFrom utils head
 #' @export
 #'
 #' @examples
@@ -73,7 +74,7 @@
 #'
 geom_transcript <-
   function(gtf.gr,
-           gene.name = "HNRNPC",
+           gene.name = NULL,
            overlap.tx.gap = 0.1,
            overlap.style = "loose",
            tx.size = 1,
@@ -179,10 +180,17 @@ ggplot_add.transcript <- function(object, plot, object_name) {
     used.unique <- setdiff(used.gtf.columns, colnames(gtf.df.used))
     stop(paste0(paste0(used.unique, collapse = ", "), " is not in provided GTF file!"))
   }
-  # select used features
+  # guess gene name from GTF file
+  if (is.null(gene.name)) {
+    gene.name <- table(gtf.df.used$gene_name) %>%
+      sort(decreasing = TRUE) %>%
+      names() %>%
+      utils::head(1)
+  }
   gene.tx.df <- gtf.df.used %>%
-    dplyr::filter(gene_name == gene.name) %>%
-    dplyr::filter(type %in% c("transcript", "exon", "UTR")) %>%
+    dplyr::mutate(type = tolower(type)) %>%
+    dplyr::filter(gene_name %in% gene.name) %>%
+    dplyr::filter(type %in% c("transcript", "exon", "utr", "five_prime_utr", "three_prime_utr")) %>%
     dplyr::select(c("seqnames", "start", "end", "strand", "type", "transcript_name"))
   # modify region
   gene.tx.df[gene.tx.df$start <= plot.range.start, "start"] <- plot.range.start
@@ -217,7 +225,7 @@ ggplot_add.transcript <- function(object, plot, object_name) {
   gene.tx.df.exon$end <- as.numeric(gene.tx.df.exon$end)
 
   # get utr region
-  gene.tx.df.utr <- gene.tx.df %>% dplyr::filter(type == "UTR")
+  gene.tx.df.utr <- gene.tx.df %>% dplyr::filter(type %in% c("utr", "five_prime_utr", "three_prime_utr"))
   gene.tx.df.utr$start <- as.numeric(gene.tx.df.utr$start)
   gene.tx.df.utr$end <- as.numeric(gene.tx.df.utr$end)
 
@@ -241,65 +249,63 @@ ggplot_add.transcript <- function(object, plot, object_name) {
     geom_arrows(gene.tx.df.exon, color.by, exon.size, arrow.length, arrow.angle, arrow.type) +
     theme_classic()
 
-  if (is.null(arrow.gap)) {
-    if (is.null(arrow.num)) {
-      stop("Please provide either arrow.num or arrow.gap!")
-    } else {
+  if (!is.null(arrow.gap) || !is.null(arrow.num)) {
+    if (!is.null(arrow.num)) {
       arrow.gap <- (plot.range.end - plot.range.start) / arrow.num
     }
-  }
-  arrow.list <- list()
-  # create arrow based on gene
-  for (i in 1:nrow(gene.tx.df.tx)) {
-    tx.seq <- as.character(gene.tx.df.tx[i, "seqnames"])
-    tx.start <- as.numeric(gene.tx.df.tx[i, "start"])
-    tx.end <- as.numeric(gene.tx.df.tx[i, "end"])
-    tx.strand <- as.character(gene.tx.df.tx[i, "strand"])
-    tx.type <- as.character(gene.tx.df.tx[i, "type"])
-    tx.name <- as.character(gene.tx.df.tx[i, "transcript_name"])
-    tx.group <- as.numeric(gene.tx.df.tx[i, "group"])
-    tx.gap <- tx.end - tx.start
-    if (tx.gap <= arrow.gap) {
-      # create only one arrow
-      arrow.pos <- floor((tx.end + tx.start) / 2)
-      arrow.list[[tx.name]] <- c(
-        tx.seq, arrow.pos, arrow.pos + 1, tx.strand,
-        tx.type, tx.name, tx.group
-      )
-    } else {
-      tx.arrow.num <- floor(tx.gap / arrow.gap)
-      tx.arrow.start <- (arrow.gap * 0:tx.arrow.num) + tx.start
-      tx.arrow.end <- tx.arrow.start + 1
-      for (trn in 1:length(tx.arrow.start)) {
-        arrow.list[[paste(tx.name, trn, sep = "_")]] <-
-          c(
-            tx.seq, tx.arrow.start[trn], tx.arrow.end[trn], tx.strand,
-            tx.type, tx.name, tx.group
-          )
+    arrow.list <- list()
+    # create arrow based on gene
+    for (i in 1:nrow(gene.tx.df.tx)) {
+      tx.seq <- as.character(gene.tx.df.tx[i, "seqnames"])
+      tx.start <- as.numeric(gene.tx.df.tx[i, "start"])
+      tx.end <- as.numeric(gene.tx.df.tx[i, "end"])
+      tx.strand <- as.character(gene.tx.df.tx[i, "strand"])
+      tx.type <- as.character(gene.tx.df.tx[i, "type"])
+      tx.name <- as.character(gene.tx.df.tx[i, "transcript_name"])
+      tx.group <- as.numeric(gene.tx.df.tx[i, "group"])
+      tx.gap <- tx.end - tx.start
+      if (tx.gap <= arrow.gap) {
+        # create only one arrow
+        arrow.pos <- floor((tx.end + tx.start) / 2)
+        arrow.list[[tx.name]] <- c(
+          tx.seq, arrow.pos, arrow.pos + 1, tx.strand,
+          tx.type, tx.name, tx.group
+        )
+      } else {
+        tx.arrow.num <- floor(tx.gap / arrow.gap)
+        tx.arrow.start <- (arrow.gap * 0:tx.arrow.num) + tx.start
+        tx.arrow.end <- tx.arrow.start + 1
+        for (trn in 1:length(tx.arrow.start)) {
+          arrow.list[[paste(tx.name, trn, sep = "_")]] <-
+            c(
+              tx.seq, tx.arrow.start[trn], tx.arrow.end[trn], tx.strand,
+              tx.type, tx.name, tx.group
+            )
+        }
       }
     }
+    arrow.df <- do.call(rbind, arrow.list) %>% as.data.frame()
+    colnames(arrow.df) <- c("seqnames", "start", "end", "strand", "type", "transcript_name", "group")
+    arrow.df$start <- as.numeric(arrow.df$start)
+    arrow.df$end <- as.numeric(arrow.df$end)
+    arrow.df$group <- as.numeric(arrow.df$group)
+    if (is.null(color.by.im)) {
+      color.by.im <- color.by
+      arrow.df[[color.by]] <- "im"
+      fill.color["im"] <- grDevices::grey(1, alpha = 0.5)
+    } else if (color.by.im %in% colnames(arrow.df)) {
+      stopifnot(unique(arrow.df[[color.by.im]]) %in% names(fill.color))
+    } else {
+      stop(paste0(
+        "The selected variable '",
+        color.by.im ,
+        "' for 'color.by.im' is not available in the data"
+      ))
+    }
+    # add arrow
+    tx.plot <- tx.plot +
+      geom_arrows(arrow.df, color.by.im, arrow.size.im, arrow.length.im, arrow.angle, arrow.type.im)
   }
-  arrow.df <- do.call(rbind, arrow.list) %>% as.data.frame()
-  colnames(arrow.df) <- c("seqnames", "start", "end", "strand", "type", "transcript_name", "group")
-  arrow.df$start <- as.numeric(arrow.df$start)
-  arrow.df$end <- as.numeric(arrow.df$end)
-  arrow.df$group <- as.numeric(arrow.df$group)
-  if (is.null(color.by.im)) {
-    color.by.im <- color.by
-    arrow.df[[color.by]] <- "im"
-    fill.color["im"] <- grDevices::grey(1, alpha = 0.5)
-  } else if (color.by.im %in% colnames(arrow.df)) {
-    stopifnot(unique(arrow.df[[color.by.im]]) %in% names(fill.color))
-  } else {
-    stop(paste0(
-      "The selected variable '",
-      color.by.im ,
-      "' for 'color.by.im' is not available in the data"
-    ))
-  }
-  # add arrow
-  tx.arrow.plot <- tx.plot +
-    geom_arrows(arrow.df, color.by.im, arrow.size.im, arrow.length.im, arrow.angle, arrow.type.im)
 
   # prepare label dataframe
   label.df <- data.frame(
@@ -308,7 +314,7 @@ ggplot_add.transcript <- function(object, plot, object_name) {
     gene = gene.tx.df.tx$transcript_name
   )
   # add label to plot
-  tx.final.plot <- tx.arrow.plot +
+  tx.plot <- tx.plot +
     geom_text(
       data = label.df,
       mapping = aes_string(x = "pos", y = "group", label = "gene"),
@@ -322,7 +328,7 @@ ggplot_add.transcript <- function(object, plot, object_name) {
     )
   # assemble plot
   patchwork::wrap_plots(plot + theme(plot.margin = margin(t = plot.space, b = plot.space)),
-    tx.final.plot,
+    tx.plot,
     ncol = 1, heights = c(1, plot.height)
   )
 }

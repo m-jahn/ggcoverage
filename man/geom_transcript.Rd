@@ -6,7 +6,7 @@
 \usage{
 geom_transcript(
   gtf.gr,
-  gene.name = "HNRNPC",
+  gene.name = NULL,
   overlap.tx.gap = 0.1,
   overlap.style = "loose",
   tx.size = 1,
@@ -33,7 +33,7 @@ geom_transcript(
 \item{gtf.gr}{Granges object of GTF, created with \code{\link[rtracklayer]{import.gff}}.
 Default: NULL.}
 
-\item{gene.name}{Gene name of all transcripts. Default: HNRNPC.}
+\item{gene.name}{Gene name of all transcripts. Default: NULL.}
 
 \item{overlap.tx.gap}{The gap between transcript groups. Default: 0.1.}
 
