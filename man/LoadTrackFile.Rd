@@ -7,7 +7,7 @@
 LoadTrackFile(
   track.file,
   track.folder = NULL,
-  format = c("bam", "wig", "bw", "bedgraph", "txt"),
+  format = c("bam", "wig", "bw", "bigwig", "bedgraph", "txt"),
   region = NULL,
   extend = 0,
   gtf.gr = NULL,
@@ -30,7 +30,7 @@ LoadTrackFile(
 
 \item{track.folder}{Track file folder. Default: NULL.}
 
-\item{format}{Track file format, chosen from bam, wig, bw(bigwig), bedgraph(bedGraph) and txt.}
+\item{format}{Track file format, one of 'bam', 'wig', 'bw' (bigwig), 'bedgraph', or 'txt'.}
 
 \item{region}{Region to extract coverage for, eg: chr14:21,677,306-21,737,601 or chr14:21,677,306.
 Default: NULL, coverage is extracted from the first annotated chromosome/sequence.}
@@ -50,7 +50,7 @@ determined by \code{meta.file}.Default: NULL.}
 
 \item{meta.file}{File contains track file metadata. Default: "".}
 
-\item{bamcoverage.path}{The path to \code{bamCoverage}, used when \code{format} is bam. Default: NULL (auto-detect).}
+\item{bamcoverage.path}{The path to \code{bamCoverage}, used when \code{format} is 'bam'. Default: NULL (auto-detect).}
 
 \item{norm.method}{Methods to normalize the number of reads per bin, chosen from "RPKM", "CPM", "BPM", "RPGC", "None".
 Default: RPKM.}

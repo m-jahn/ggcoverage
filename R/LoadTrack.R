@@ -2,7 +2,7 @@
 #'
 #' @param track.file Track file, when \code{track.folder} is not NULL, determined by \code{track.folder}.
 #' @param track.folder Track file folder. Default: NULL.
-#' @param format Track file format, chosen from bam, wig, bw(bigwig), bedgraph(bedGraph) and txt.
+#' @param format Track file format, one of 'bam', 'wig', 'bw' (bigwig), 'bedgraph', or 'txt'.
 #' @param region Region to extract coverage for, eg: chr14:21,677,306-21,737,601 or chr14:21,677,306.
 #'   Default: NULL, coverage is extracted from the first annotated chromosome/sequence.
 #' @param extend Extend length of \code{region}. Default: 0.
@@ -14,7 +14,7 @@
 #'   Type (sample with replicates information), Group (sample group). when \code{meta.file} is not NULL,
 #'   determined by \code{meta.file}.Default: NULL.
 #' @param meta.file File contains track file metadata. Default: "".
-#' @param bamcoverage.path The path to \code{bamCoverage}, used when \code{format} is bam. Default: NULL (auto-detect).
+#' @param bamcoverage.path The path to \code{bamCoverage}, used when \code{format} is 'bam'. Default: NULL (auto-detect).
 #' @param norm.method Methods to normalize the number of reads per bin, chosen from "RPKM", "CPM", "BPM", "RPGC", "None".
 #'   Default: RPKM.
 #' @param single.nuc Logical value, whether to visualize at single nucleotide level. Default: FALSE.
@@ -59,7 +59,7 @@
 #' )
 LoadTrackFile <- function(
     track.file, track.folder = NULL,
-    format = c("bam", "wig", "bw", "bedgraph", "txt"),
+    format = c("bam", "wig", "bw", "bigwig", "bedgraph", "txt"),
     region = NULL, extend = 0,
     gtf.gr = NULL, gene.name = "HNRNPC",
     gene.name.type = c("gene_name", "gene_id"),
@@ -75,7 +75,26 @@ LoadTrackFile <- function(
 
   # prepare track files
   if (!is.null(track.folder)) {
-    track.file <- list.files(path = track.folder, full.names = TRUE, pattern = paste0(format, "$"))
+    file_ending <- switch(format,
+      bam = "\\.(bam|BAM|Bam)$",
+      wig = "\\.(wig|WIG|Wig)$",
+      bw = "\\.(bigwig|bw|BigWig|BIGWIG)$",
+      bigwig = "\\.(bigwig|bw|BigWig|BIGWIG)$",
+      bedgraph = "\\.(bedgraph|BedGraph|bedGraph|BEDGRAPH)$",
+      txt = "\\.(txt|csv|tsv|TXT|CSV|TSV)$"
+    )
+    track.file <- list.files(path = track.folder, full.names = TRUE, pattern = file_ending)
+    if (length(track.file)) {
+      message(paste0(
+        "Found ", length(track.file),
+        " files matching file ending for '", format, "'"
+      ))
+    } else {
+      stop(paste0(
+        "Found no files matching the specified format: ",
+        format, " (", file_ending, ")"
+      ))
+    }
   }
 
   # get genomic region if supplied, else it is guessed from input
@@ -84,9 +103,9 @@ LoadTrackFile <- function(
     if (format == "bam") {
       file_stats <- Rsamtools::countBam(track.file[1])
       message(paste0(
-          "Estimating coverage for file '", file_stats$file,
-          "' with ", file_stats$records, " reads and ",
-          file_stats$nucleotides, " nucleotides"
+        "Estimating coverage for file '", file_stats$file,
+        "' with ", file_stats$records, " reads and ",
+        file_stats$nucleotides, " nucleotides"
       ))
       record_stats <- Rsamtools::idxstatsBam(track.file[1]) %>%
         dplyr::arrange(dplyr::desc(.data$mapped)) %>%
@@ -101,11 +120,12 @@ LoadTrackFile <- function(
         seqnames = as.character(record_stats$seqnames),
         IRanges::IRanges(start = record_range[1], end = record_range[2])
       )
-      message(paste0("Extracted range of length ", diff(record_range),
-          " from SeqRecord '", record_stats$seqnames,
-          "' (", record_range[1], ":", record_range[2],")"
+      message(paste0(
+        "Extracted range of length ", diff(record_range),
+        " from SeqRecord '", record_stats$seqnames,
+        "' (", record_range[1], ":", record_range[2], ")"
       ))
-    } else if (format %in% c("wig", "bw", "bedgraph")) {
+    } else if (format %in% c("wig", "bw", "bigwig", "bedgraph")) {
       gr <- range(rtracklayer::import(track.file[1]))
       seqnames <- as.character(seqnames(gr))
       if (GenomicRanges::width(gr) <= 100000) {
@@ -123,7 +143,7 @@ LoadTrackFile <- function(
   }
 
   # get track dataframe
-  if (format %in% c("wig", "bw", "bedgraph")) {
+  if (format %in% c("wig", "bw", "bigwig", "bedgraph")) {
     if (single.nuc) {
       stop("To visualize single nucleotide resolution, please use bam file!")
     } else {
@@ -237,7 +257,6 @@ LoadTrackFile <- function(
     track.df$Group <- track.df$TrackFile
     track.df$TrackFile <- NULL
   } else {
-    meta.info.used$SampleName <- paste(meta.info.used$SampleName, format, sep = ".")
     track.df <- merge(track.df, meta.info.used, by.x = "TrackFile", by.y = "SampleName")
     track.df$TrackFile <- NULL
   }
@@ -254,20 +273,22 @@ LoadTrackFile <- function(
 }
 
 import_bw <- function(x, gr) {
+  base_name <- gsub("\\.[a-zA-Z0-9]+$", "", basename(x))
   single.track.df <- as.data.frame(rtracklayer::import(x, which = gr))
-  single.track.df$TrackFile <- basename(x)
+  single.track.df$TrackFile <- base_name
   return(single.track.df)
 }
 
 import_txt <- function(x) {
+  base_name <- gsub("\\.[a-zA-Z0-9]+$", "", basename(x))
   single.track.df <- utils::read.table(x, header = TRUE)
-  single.track.df$TrackFile <- basename(x)
+  single.track.df$TrackFile <- base_name
   return(single.track.df)
 }
 
 import_bam_ga <- function(x, gr, bin_size, bin.func) {
   # get basename
-  base_name <- basename(x)
+  base_name <- gsub("\\.[a-zA-Z0-9]+$", "", basename(x))
   # load track
   param <- Rsamtools::ScanBamParam(which = gr)
   ga <- GenomicAlignments::readGAlignments(x, param = param)
@@ -316,8 +337,8 @@ single_nuc_cov <- function(x, single.nuc.region) {
   single.track.df$strand <- "*"
   single.track.df <- single.track.df %>% dplyr::select(-c("A", "G", "C", "T"))
   # get basename
-  track.file.base <- basename(x)
-  single.track.df$TrackFile <- track.file.base
+  base_name <- gsub("\\.[a-zA-Z0-9]+$", "", basename(x))
+  single.track.df$TrackFile <- base_name
   single.track.df <- single.track.df[c(
     "seqnames", "start", "end", "width",
     "strand", "score", "TrackFile"
@@ -343,7 +364,8 @@ bam_coverage <- function(
   }
   # import wig, bigwig and bedgraph file
   single.track.df <- as.data.frame(rtracklayer::import(out.bw.file, which = gr))
-  single.track.df$TrackFile <- basename(x)
+  base_name <- gsub("\\.[a-zA-Z0-9]+$", "", basename(x))
+  single.track.df$TrackFile <- base_name
   return(single.track.df)
 }
 
